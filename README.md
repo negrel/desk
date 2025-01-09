@@ -1,38 +1,8 @@
-# `desk` - Desktop Environment Simple Kit
+# 🖥️ `desk` - Desktop Environment Simple Kit
 
-
-
-## Why ?
-
-- What was your motivation?
-- Why did you build this project?
-- What problem does it solve?
-- What did you learn?
-- What makes your project stand out?
-
-If your project has a lot of features, consider adding a "Features" section and listing them here.
-
-## Getting started
-
-### Configuration
-
-Here is a table of configuration options:
-
-|  Option name  | Default value |           Description            |
-| :-----------: | :-----------: | :------------------------------: |
-| `OPTION_NAME` |    `VALUE`    |       Option description.        |
-
-### Building the project
-
-```shell
-make build
-```
-
-### Running the tests
-
-```shell
-make tests
-```
+DESK is a lightweight collection of components designed to enhance the Sway
+window manager experience. It provides essential desktop environment features
+through a combination of daemons, D-Bus services, and graphical applications.
 
 ## Contributing
 
