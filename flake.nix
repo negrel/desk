@@ -11,22 +11,26 @@
         let
           pkgs = import nixpkgs { inherit system; };
           lib = pkgs.lib;
-          deps = with pkgs; [ libuv systemdLibs ];
+          repo = ./.;
         in {
           devShells = {
             default = pkgs.mkShell rec {
-              buildInputs = with pkgs;
-                [
-                  pkg-config
+              buildInputs = with pkgs; [
+                clang-tools
+                valgrind-light
 
-                  clang-tools
-                  valgrind-light
-                ] ++ deps;
+                pkg-config
+                systemdLibs
+              ];
               LD_LIBRARY_PATH = "${lib.makeLibraryPath buildInputs}";
               DEBUG = 1;
             };
           };
-          packages = { };
+          packages = {
+            powermon = pkgs.callPackage ./src/daemon/powermon/pkg.nix {
+              inherit pkgs repo;
+            };
+          };
         });
     in outputsWithSystem // outputsWithoutSystem;
 }

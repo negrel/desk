@@ -1,4 +1,5 @@
 export PROJECT_DIR ?= $(shell git rev-parse --show-toplevel)
+export PREFIX ?= /usr/local
 export BUILD_DIR ?= $(PROJECT_DIR)/build
 export SRC_DIR ?= $(PROJECT_DIR)/src
 export LIB_DIR ?= $(PROJECT_DIR)/lib
@@ -18,14 +19,19 @@ export SRC_HFILES := $(shell find $(PROJECT_DIR)/src -maxdepth 1 -type f -name '
 export SRC_FILES := $(SRC_CFILES) $(SRC_HFILES)
 
 .PHONY: all
-all: clean
+all: clean build/daemon/powermon install
+
+.PHONY: install
+install:
+	mkdir -p $(PREFIX)/bin
+	cp $(BUILD_DIR)/* $(PREFIX)/bin/
 
 build/%: $(BUILD_DIR)/%
 	@true
 
 .PHONY: clean
 clean:
-	rm -rf $(BUILD_DIR)
+	-rm -rf $(BUILD_DIR)
 
 .PHONY: format
 format:
@@ -43,7 +49,7 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 $(BUILD_DIR)/%: $(BUILD_DIR)
-	$(MAKE) -C src/$* build
+	$(MAKE) -C $(PROJECT_DIR)/src/$* build
 
 run/%:
-	$(MAKE) -C src/$* run
+	$(MAKE) -C $(PROJECT_DIR)/src/$* run
