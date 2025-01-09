@@ -8,8 +8,9 @@
 #include <systemd/sd-event.h>
 
 #define LOG_MODULE "powermon"
-#include "debug.h"
 #include "log.h"
+
+#include "debug.h"
 #include "notify.h"
 #include "tllist.h"
 
@@ -57,6 +58,7 @@ typedef struct powermon_data {
   sd_bus *system_bus;
   sd_bus *user_bus;
   tll(battery_data *) batteries;
+  uint32_t notif_id;
 } powermon_data;
 
 static void print_usage(char *prog_name);
@@ -279,7 +281,7 @@ static int on_battery_changed(sd_bus_message *m, void *userdata,
   int r = 0;
   const char *interface = NULL;
   battery_data *battery = userdata;
-  notification_t notif = {0};
+  notification notif = {0};
 
   // Read interface.
   SD_TRY(sd_bus_message_read(m, "s", &interface),
@@ -334,17 +336,29 @@ static int on_battery_changed(sd_bus_message *m, void *userdata,
   if (battery->state == UP_STATE_DISCHARGING) {
     if (battery->level == UP_STATE_BATTERY_LEVEL_LOW ||
         battery->percentage < 20.0) {
+      LOG_INFO("Low battery, sending notification");
+
       notif.app = "DESK Power Monitor";
       notif.title = "Low battery";
-      notif.timeout = -1;
+      notif.timeout = 0;
+      notif.hints = &notification_urgency_high;
+      notif.n_hints = 1;
+      notif.replace_id = battery->powermon->notif_id;
 
       r = asprintf((char **)&notif.body, "Please charge now, %.0f%% remaining.",
                    battery->percentage);
       if (r == -1)
         LOG_FATAL("failed to allocated notification body");
 
-      SD_TRY_GOTO(notify(battery->powermon->user_bus, &notif, NULL), cleanup,
-                  "failed to send notification");
+      SD_TRY_GOTO(notify(battery->powermon->user_bus, &notif,
+                         &battery->powermon->notif_id, NULL),
+                  cleanup, "failed to send notification");
+    }
+  } else {
+    if (battery->powermon->notif_id != 0) {
+      SD_TRY_GOTO(notification_close(battery->powermon->user_bus,
+                                     battery->powermon->notif_id, NULL),
+                  cleanup, "failed to close notification");
     }
   }
 
