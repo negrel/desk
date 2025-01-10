@@ -18,9 +18,13 @@
               buildInputs = with pkgs; [
                 clang-tools
                 valgrind-light
-
                 pkg-config
+
                 systemdLibs
+                wayland
+                wayland-protocols
+                wayland-scanner
+                libGL.dev
               ];
               LD_LIBRARY_PATH = "${lib.makeLibraryPath buildInputs}";
               DEBUG = 1;
