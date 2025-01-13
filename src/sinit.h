@@ -5,13 +5,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
-#include <EGL/egl.h>
-#include <GLES2/gl2.h>
 #include <wayland-client-protocol.h>
 #include <wayland-client.h>
-#include <wayland-egl-core.h>
-#include <wayland-egl.h>
 
 #ifndef LOG_MODULE
 #define LOG_MODULE "sinit"
@@ -20,33 +18,60 @@
 
 #include "stable/presentation-time/presentation-time.h"
 #include "stable/xdg-shell/xdg-shell.h"
+#include "wlr/unstable/wlr-layer-shell-unstable-v1.h"
 
 /**
  * A surface initialization library that provides easy ways to create rendering
  * surfaces (layer shell, XDG shell / window). Current implementation is
- * EGL + Wayland only.
+ * Wayland only.
  */
 
 union sinit_surface;
-typedef void (*sinit_render_fn)(union sinit_surface *surf, int width,
-                                int height, uint32_t time, void *userdata);
+typedef void (*sinit_render_fn)(union sinit_surface *surf, void *buf, int width,
+                                int height, int scale, uint32_t time,
+                                void *userdata);
 
 struct sinit_surface_config {
   int width;
   int height;
 };
 
+enum sinit_layer {
+  SINIT_LAYER_BACKGROUND = 0,
+  SINIT_LAYER_BOTTOM = 1,
+  SINIT_LAYER_TOP = 2,
+  SINIT_LAYER_OVERLAY = 3,
+};
+
+enum sinit_anchor {
+  SINIT_ANCHOR_NONE = 0,
+  SINIT_ANCHOR_TOP = 1,
+  SINIT_ANCHOR_BOTTOM = 2,
+  SINIT_ANCHOR_LEFT = 4,
+  SINIT_ANCHOR_RIGHT = 8,
+  SINIT_ANCHOR_TOP_EXCLUSIVE = 16,
+  SINIT_ANCHOR_BOTTOM_EXCLUSIVE = 32,
+  SINIT_ANCHOR_LEFT_EXCLUSIVE = 64,
+  SINIT_ANCHOR_RIGHT_EXCLUSIVE = 128,
+};
+
+enum sinit_surface_type {
+  SINIT_RAW_SURFACE,
+  SINIT_XDG_TOP_LEVEL_SURFACE,
+  SINIT_LAYER_SHELL_SURFACE,
+};
+
 struct sinit_base_surface {
-  int type;
+  enum sinit_surface_type type;
   struct wl_surface *wl_surface;
   struct wl_region *region;
-  struct wl_egl_window *egl_window;
-  struct wl_egl_surface *egl_surface;
   struct wl_callback *wl_callback;
+  struct wl_buffer *wl_buffer;
+  int factor;
+  void *buffer;
 
   // Config.
-  struct sinit_surface_config pending_config;
-  struct sinit_surface_config active_config;
+  struct sinit_surface_config config;
 
   sinit_render_fn render;
   uint32_t prev_render;
@@ -57,11 +82,21 @@ struct sinit_base_surface {
 /**
  * A window or XDG shell surface in Wayland terms.
  */
-struct sinit_xdg_surface {
+struct sinit_xdg_toplevel_surface {
   struct sinit_base_surface base;
   struct xdg_toplevel *xdg_toplevel;
   struct xdg_surface *xdg_surface;
-  bool closed;
+
+  // Config.
+  struct sinit_surface_config pending_config;
+};
+
+/**
+ * A layer shell surface.
+ */
+struct sinit_layer_surface {
+  struct sinit_base_surface base;
+  struct zwlr_layer_surface_v1 *layer_surface;
 };
 
 /**
@@ -69,7 +104,8 @@ struct sinit_xdg_surface {
  */
 typedef union sinit_surface {
   struct sinit_base_surface base;
-  struct sinit_xdg_surface xdg;
+  struct sinit_xdg_toplevel_surface xdg;
+  struct sinit_layer_surface layer;
 } sinit_surface;
 
 struct sinit_state {
@@ -84,15 +120,8 @@ struct sinit_state {
   uint32_t shell_name;
   struct wp_presentation *presentation;
   uint32_t presentation_name;
-
-  // EGL
-  EGLDisplay egl_display;
-  EGLConfig egl_conf;
-  EGLSurface egl_surface;
-  EGLContext egl_context;
-
-  // EGL + Wayland
-  struct wl_egl_window *egl_window;
+  struct zwlr_layer_shell_v1 *layer_shell;
+  uint32_t layer_shell_name;
 
   // General data.
   const char *app_id;
@@ -123,7 +152,7 @@ static void handle_global(void *data, struct wl_registry *registry,
 
   if (strcmp(interface, wl_compositor_interface.name) == 0) {
     state->compositor =
-        wl_registry_bind(registry, name, &wl_compositor_interface, 5);
+        wl_registry_bind(registry, name, &wl_compositor_interface, 6);
     state->compositor_name = name;
   } else if (strcmp(interface, wl_shm_interface.name) == 0) {
     state->shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
@@ -136,6 +165,10 @@ static void handle_global(void *data, struct wl_registry *registry,
     state->presentation =
         wl_registry_bind(registry, name, &wp_presentation_interface, 1);
     state->presentation_name = name;
+  } else if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
+    state->layer_shell =
+        wl_registry_bind(registry, name, &zwlr_layer_shell_v1_interface, 1);
+    state->layer_shell_name = name;
   }
 }
 
@@ -150,6 +183,10 @@ static void handle_global_remove(void *data, struct wl_registry *registry,
     LOG_FATAL("global wayland shm removed");
   } else if (name == state->shell_name) {
     LOG_FATAL("global wayland shell removed");
+  } else if (name == state->presentation_name) {
+    LOG_FATAL("global wayland presentation removed");
+  } else if (name == state->layer_shell_name) {
+    LOG_FATAL("global wayland layer shell removed");
   } else {
     LOG_DBG("global %d removed", name);
   }
@@ -160,6 +197,10 @@ static const struct wl_registry_listener registry_listener = {
     .global_remove = handle_global_remove,
 };
 
+static void create_wl_buffer(struct wl_shm *shm, int width, int height,
+                             struct wl_buffer **wl_buf, void **buf);
+static void resize_surface(sinit_surface *surf, int width, int height,
+                           int factor);
 static void sinit_surface_request_frame(sinit_surface *surf);
 static void sinit_surface_render(sinit_surface *surf, uint32_t time);
 static void xdg_surface_configure(void *data, struct xdg_surface *xdg_surface,
@@ -172,30 +213,30 @@ static void xdg_surface_configure(void *data, struct xdg_surface *xdg_surface,
 
   xdg_surface_ack_configure(surf->xdg.xdg_surface, serial);
 
-  bool resized =
-      surf->base.active_config.width != surf->base.pending_config.width ||
-      surf->base.active_config.height != surf->base.pending_config.height;
+  bool resized = surf->base.config.width != surf->xdg.pending_config.width ||
+                 surf->base.config.height != surf->xdg.pending_config.height;
 
-  if (resized) {
+  if (resized || surf->base.prev_render == 0) {
+    int width = surf->xdg.pending_config.width;
+    int height = surf->xdg.pending_config.height;
+
     LOG_DBG("surface resized from w=%d h=%d to w=%d h=%d",
-            surf->base.active_config.width, surf->base.active_config.height,
-            surf->base.pending_config.width, surf->base.pending_config.height);
+            surf->base.config.width, surf->base.config.height, width, height);
+
+    // Resize buffer.
+    resize_surface(surf, surf->xdg.pending_config.width,
+                   surf->xdg.pending_config.height, surf->base.factor);
 
     // Update opaque region.
     if (surf->base.region != NULL) {
-      wl_region_subtract(surf->base.region, 0, 0,
-                         surf->base.active_config.width,
-                         surf->base.active_config.height);
-      wl_region_add(surf->base.region, 0, 0, surf->base.pending_config.width,
-                    surf->base.pending_config.height);
+      wl_region_subtract(surf->base.region, 0, 0, surf->base.config.width,
+                         surf->base.config.height);
+      wl_region_add(surf->base.region, 0, 0, width, height);
       wl_surface_set_opaque_region(surf->base.wl_surface, surf->base.region);
     }
-
-    wl_egl_window_resize(surf->base.egl_window, surf->base.pending_config.width,
-                         surf->base.pending_config.height, 0, 0);
   }
 
-  surf->base.active_config = surf->base.pending_config;
+  surf->base.config = surf->xdg.pending_config;
 
   // Render first frame or schedule a new frame.
   if (surf->base.prev_render == 0)
@@ -220,10 +261,10 @@ static void xdg_toplevel_configure(void *data,
   LOG_DBG("xdg toplevel configure xdg_toplevel=%p width=%d height=%d",
           (void *)xdg_toplevel, width, height);
 
-  surf->base.pending_config = (struct sinit_surface_config){
-      .width = width,
-      .height = height,
-  };
+  if (width > 0)
+    surf->xdg.pending_config.width = width;
+  if (height > 0)
+    surf->xdg.pending_config.height = height;
 }
 
 static void xdg_toplevel_close(void *data, struct xdg_toplevel *xdg_toplevel) {
@@ -273,15 +314,155 @@ static void frame_done(void *data, struct wl_callback *callback,
   wl_callback_destroy(callback);
   surf->base.wl_callback = NULL;
 
-  if (!surf->base.closed)
-    sinit_surface_render(surf, time);
+  sinit_surface_render(surf, time);
 }
 
 static const struct wl_callback_listener frame_listener = {
     .done = frame_done,
 };
 
+static void layer_surface_configure(void *data,
+                                    struct zwlr_layer_surface_v1 *layer_surface,
+                                    uint32_t serial, uint32_t width,
+                                    uint32_t height) {
+  sinit_surface *surf = data;
+
+  LOG_DBG("layer surface configure width=%d height=%d serial=%d", width, height,
+          serial);
+
+  zwlr_layer_surface_v1_ack_configure(layer_surface, serial);
+
+  bool resized = false;
+
+  if (surf->layer.base.config.width == 0) {
+    surf->layer.base.config.width = width;
+    resized = true;
+  }
+  if (surf->layer.base.config.height == 0) {
+    surf->layer.base.config.height = height;
+    resized = true;
+  }
+
+  if (resized || surf->base.prev_render == 0)
+    resize_surface(surf, surf->layer.base.config.width,
+                   surf->layer.base.config.height, surf->base.factor);
+
+  // Render first frame or schedule a new frame.
+  if (surf->base.prev_render == 0) {
+    sinit_surface_render(surf, 0);
+  } else
+    sinit_surface_request_frame(surf);
+}
+
+static void layer_surface_closed(void *data,
+                                 struct zwlr_layer_surface_v1 *layer_surface) {
+  (void)layer_surface;
+  sinit_surface *surf = data;
+  surf->base.closed = true;
+}
+
+static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
+    .configure = layer_surface_configure,
+    .closed = layer_surface_closed,
+};
+
+static void surface_enter(void *data, struct wl_surface *wl_surface,
+                          struct wl_output *output) {
+  (void)data;
+  (void)wl_surface;
+  (void)output;
+}
+
+static void surface_leave(void *data, struct wl_surface *wl_surface,
+                          struct wl_output *output) {
+  (void)data;
+  (void)wl_surface;
+  (void)output;
+}
+
+static void surface_scale(void *data, struct wl_surface *surface,
+                          int32_t factor) {
+  (void)surface;
+
+  sinit_surface *surf = data;
+
+  LOG_DBG("surface scale surface=%p factor=%d", (void *)surf, factor);
+
+  surf->base.factor = factor;
+  sinit_surface_request_frame(surf);
+}
+
+static void surface_buffer_transform(void *data, struct wl_surface *wl_surface,
+                                     uint32_t transform) {
+  (void)data;
+  (void)wl_surface;
+  (void)transform;
+}
+
+static const struct wl_surface_listener surface_listener = {
+    .enter = surface_enter,
+    .leave = surface_leave,
+    .preferred_buffer_scale = surface_scale,
+    .preferred_buffer_transform = surface_buffer_transform,
+};
+
 /* Private helper function */
+
+static int create_shm_file(size_t size) {
+  char template[] = "/tmp/wayland-shm-XXXXXX";
+  int fd = mkstemp(template);
+  if (fd < 0)
+    return -1;
+
+  unlink(template);
+
+  if (ftruncate(fd, size) < 0) {
+    close(fd);
+    return -1;
+  }
+
+  return fd;
+}
+
+static void create_wl_buffer(struct wl_shm *shm, int width, int height,
+                             struct wl_buffer **wl_buf, void **buf) {
+  int stride = 4 * width;
+  int size = stride * height;
+
+  int fd = create_shm_file(size);
+  if (fd < 0)
+    LOG_FATAL("failed to create shm file: %m (size=%d)", size);
+
+  // Map memory
+  void *data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  if (data == MAP_FAILED) {
+    close(fd);
+    LOG_FATAL("failed to mmap file: %m (size=%d)", size);
+  }
+
+  struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, size);
+  struct wl_buffer *buffer = wl_shm_pool_create_buffer(
+      pool, 0, width, height, stride, WL_SHM_FORMAT_ARGB8888);
+  wl_shm_pool_destroy(pool);
+
+  close(fd);
+
+  *buf = data;
+  *wl_buf = buffer;
+}
+
+static void resize_surface(sinit_surface *surf, int width, int height,
+                           int factor) {
+  if (surf->base.wl_buffer != NULL) {
+    wl_buffer_destroy(surf->base.wl_buffer);
+    munmap(surf->base.buffer, surf->base.factor * surf->base.config.width *
+                                  surf->base.config.height * 4);
+  }
+  create_wl_buffer(state.shm, width * factor, height * factor,
+                   &surf->base.wl_buffer, &surf->base.buffer);
+  wl_surface_attach(surf->base.wl_surface, surf->base.wl_buffer, 0, 0);
+  wl_surface_set_buffer_scale(surf->base.wl_surface, factor);
+}
 
 static void init_wayland(struct sinit_state *s) {
   s->display = wl_display_connect(NULL);
@@ -304,85 +485,17 @@ static void init_wayland(struct sinit_state *s) {
     LOG_FATAL("compositor doesn't support wl_shm");
   if (s->presentation == NULL)
     LOG_FATAL("compositor doesn't support presentation time protocol");
+  if (s->layer_shell == NULL)
+    LOG_FATAL("compositor doesn't support wlr layer shell protocol");
 }
 
 static void deinit_wayland(struct sinit_state *s) {
+  zwlr_layer_shell_v1_destroy(s->layer_shell);
   xdg_wm_base_destroy(s->shell);
   wl_shm_destroy(s->shm);
   wl_registry_destroy(s->registry);
   wl_compositor_destroy(s->compositor);
   wl_display_disconnect(s->display);
-}
-
-static void init_egl(struct sinit_state *s) {
-  EGLint major, minor, count, n, size;
-  EGLConfig *configs;
-  int i;
-  EGLint config_attribs[] = {EGL_SURFACE_TYPE,
-                             EGL_WINDOW_BIT,
-                             EGL_RED_SIZE,
-                             8,
-                             EGL_GREEN_SIZE,
-                             8,
-                             EGL_BLUE_SIZE,
-                             8,
-                             EGL_ALPHA_SIZE,
-                             8,
-                             EGL_RENDERABLE_TYPE,
-                             EGL_OPENGL_ES2_BIT,
-                             EGL_NONE};
-
-  static const EGLint context_attribs[] = {EGL_CONTEXT_CLIENT_VERSION, 2,
-                                           EGL_NONE};
-
-  s->egl_display = eglGetDisplay((EGLNativeDisplayType)s->display);
-  if (s->egl_display == EGL_NO_DISPLAY)
-    LOG_FATAL("failed to create EGL display");
-  else
-    LOG_DBG("EGL display created");
-
-  if (eglInitialize(s->egl_display, &major, &minor) != EGL_TRUE)
-    LOG_FATAL("failed to initialize EGL display");
-
-  LOG_DBG("EGL major: %d, minor %d", major, minor);
-
-  eglGetConfigs(s->egl_display, NULL, 0, &count);
-  LOG_DBG("EGL has %d configs", count);
-
-  configs = calloc(count, sizeof(*configs));
-
-  eglChooseConfig(s->egl_display, config_attribs, configs, count, &n);
-
-  for (i = 0; i < n; i++) {
-    eglGetConfigAttrib(s->egl_display, configs[i], EGL_BUFFER_SIZE, &size);
-    LOG_DBG("buffer size for EGL config %d is %d", i, size);
-    eglGetConfigAttrib(s->egl_display, configs[i], EGL_RED_SIZE, &size);
-    LOG_DBG("red size for EGL config %d is %d", i, size);
-
-    s->egl_conf = configs[i];
-    break;
-  }
-
-  free(configs);
-
-  s->egl_context = eglCreateContext(s->egl_display, s->egl_conf, EGL_NO_CONTEXT,
-                                    context_attribs);
-  if (s->egl_context == EGL_NO_CONTEXT)
-    LOG_FATAL("failed to create egl context");
-}
-
-static void deinit_egl(struct sinit_state *s) {
-  if (s->egl_context != EGL_NO_CONTEXT) {
-    eglDestroyContext(s->egl_display, s->egl_conf);
-    s->egl_context = EGL_NO_CONTEXT;
-  }
-
-  if (s->egl_display != EGL_NO_DISPLAY) {
-    eglTerminate(s->egl_display);
-    s->egl_display = EGL_NO_DISPLAY;
-  }
-
-  eglReleaseThread();
 }
 
 /* Surface initialization public API */
@@ -394,7 +507,6 @@ static void deinit_egl(struct sinit_state *s) {
 void sinit_init(const char *app_id) {
   state.app_id = app_id;
   init_wayland(&state);
-  init_egl(&state);
 }
 
 /**
@@ -406,10 +518,7 @@ int sinit_run() { return wl_display_dispatch(state.display); }
 /**
  * Deinitialize library state and free associated resources.
  */
-void sinit_deinit() {
-  deinit_egl(&state);
-  deinit_wayland(&state);
-}
+void sinit_deinit() { deinit_wayland(&state); }
 
 /* Surface methods */
 
@@ -423,16 +532,13 @@ void sinit_surface_request_frame(sinit_surface *surf) {
 }
 
 static void sinit_surface_render(sinit_surface *surf, uint32_t time) {
-  if (surf->base.egl_surface == NULL)
+  if (surf->base.closed)
     return;
 
-  eglMakeCurrent(state.egl_display, surf->base.egl_surface,
-                 surf->base.egl_surface, state.egl_context);
+  surf->base.render(surf, surf->base.buffer, surf->base.config.width,
+                    surf->base.config.height, surf->base.factor, time,
+                    surf->base.userdata);
 
-  surf->base.render(surf, surf->base.active_config.width,
-                    surf->base.active_config.height, time, surf->base.userdata);
-
-  eglSwapBuffers(state.egl_display, surf->base.egl_surface);
   wl_surface_commit(surf->base.wl_surface);
 
   surf->base.prev_render = time;
@@ -443,12 +549,17 @@ static void sinit_surface_render(sinit_surface *surf, uint32_t time) {
 void sinit_xdg_surface_init(sinit_surface *surf, int width, int height,
                             bool opaque, sinit_render_fn render,
                             void *userdata) {
-  surf->base.type = 1;
+  surf->base.type = SINIT_XDG_TOP_LEVEL_SURFACE;
+  surf->base.factor = 1;
   surf->base.render = render;
   surf->base.userdata = userdata;
+  surf->base.closed = false;
+  surf->xdg.pending_config.width = width;
+  surf->xdg.pending_config.height = height;
 
   // Wayland surface
   surf->base.wl_surface = wl_compositor_create_surface(state.compositor);
+  wl_surface_add_listener(surf->base.wl_surface, &surface_listener, surf);
   surf->xdg.xdg_surface =
       xdg_wm_base_get_xdg_surface(state.shell, surf->base.wl_surface);
   xdg_surface_add_listener(surf->xdg.xdg_surface, &xdg_surface_listener, surf);
@@ -465,36 +576,19 @@ void sinit_xdg_surface_init(sinit_surface *surf, int width, int height,
     wl_surface_set_opaque_region(surf->base.wl_surface, surf->base.region);
   }
 
-  // EGL surface.
-  surf->base.egl_window =
-      wl_egl_window_create(surf->base.wl_surface, width, height);
-  if (surf->base.egl_window == EGL_NO_SURFACE)
-    LOG_FATAL("failed to create EGL window");
-  else
-    LOG_DBG("EGL window created");
-
-  surf->base.egl_surface =
-      eglCreateWindowSurface(state.egl_display, state.egl_conf,
-                             (EGLNativeWindowType)surf->base.egl_window, NULL);
-  if (surf->base.egl_surface == EGL_NO_SURFACE)
-    LOG_FATAL("failed to create EGL surface");
-  else
-    LOG_DBG("EGL surface created");
-
   // Commit surface.
   wl_surface_commit(surf->base.wl_surface);
 }
 
-void sinit_xdg_surface_deinit(sinit_surface *surf) {
-  // Destroy EGL resources.
-  if (surf->base.egl_surface != EGL_NO_SURFACE) {
-    eglDestroySurface(state.egl_display, surf->base.egl_surface);
-    surf->base.egl_surface = EGL_NO_SURFACE;
-  }
-  if (surf->base.egl_window != NULL)
-    wl_egl_window_destroy(surf->base.egl_window);
-
+void sinit_xdg_toplevel_surface_deinit(sinit_surface *surf) {
   // Destroy Wayland resources.
+  if (surf->base.wl_callback != NULL)
+    wl_callback_destroy(surf->base.wl_callback);
+  if (surf->base.wl_buffer != NULL) {
+    wl_buffer_destroy(surf->base.wl_buffer);
+    munmap(surf->base.buffer,
+           surf->base.config.width * surf->base.config.height * 4);
+  }
   if (surf->xdg.xdg_toplevel != NULL)
     xdg_toplevel_destroy(surf->xdg.xdg_toplevel);
   if (surf->xdg.xdg_surface != NULL)
@@ -503,6 +597,75 @@ void sinit_xdg_surface_deinit(sinit_surface *surf) {
     wl_region_destroy(surf->base.region);
   if (surf->base.wl_surface != NULL)
     wl_surface_destroy(surf->base.wl_surface);
+
+  surf->base.type = SINIT_RAW_SURFACE;
+}
+
+/* Layer shell surface */
+
+void sinit_layer_surface_init(sinit_surface *surf, enum sinit_layer layer,
+                              enum sinit_anchor anchors, int exclusive,
+                              int width, int height, bool opaque,
+                              sinit_render_fn render, void *userdata) {
+  surf->base.type = SINIT_LAYER_SHELL_SURFACE;
+  surf->base.factor = 1;
+  surf->base.render = render;
+  surf->base.userdata = userdata;
+  surf->base.closed = false;
+  surf->base.config.width = width;
+  surf->base.config.height = height;
+
+  // Wayland surface.
+  surf->base.wl_surface = wl_compositor_create_surface(state.compositor);
+  wl_surface_add_listener(surf->base.wl_surface, &surface_listener, surf);
+  surf->layer.layer_surface = zwlr_layer_shell_v1_get_layer_surface(
+      state.layer_shell, surf->base.wl_surface, NULL, layer, "");
+  if (anchors != 0)
+    zwlr_layer_surface_v1_set_anchor(surf->layer.layer_surface,
+                                     (anchors & 0xF) | (anchors >> 4));
+  if (anchors >= SINIT_ANCHOR_TOP_EXCLUSIVE)
+    zwlr_layer_surface_v1_set_exclusive_zone(surf->layer.layer_surface,
+                                             anchors >> 4);
+  if (exclusive)
+    zwlr_layer_surface_v1_set_exclusive_zone(surf->layer.layer_surface,
+                                             exclusive);
+  zwlr_layer_surface_v1_set_size(surf->layer.layer_surface, width, height);
+  zwlr_layer_surface_v1_add_listener(surf->layer.layer_surface,
+                                     &layer_surface_listener, surf);
+
+  if (opaque) {
+    surf->base.region = wl_compositor_create_region(state.compositor);
+    wl_region_add(surf->base.region, 0, 0, width, height);
+    wl_surface_set_opaque_region(surf->base.wl_surface, surf->base.region);
+  }
+
+  // Commit surface.
+  wl_surface_commit(surf->base.wl_surface);
+}
+
+void sinit_layer_surface_margin(sinit_surface *surf, int top, int right,
+                                int bottom, int left) {
+  zwlr_layer_surface_v1_set_margin(surf->layer.layer_surface, top, right,
+                                   bottom, left);
+}
+
+void sinit_layer_surface_deinit(sinit_surface *surf) {
+  // Destroy Wayland resources.
+  if (surf->base.wl_callback != NULL)
+    wl_callback_destroy(surf->base.wl_callback);
+  if (surf->base.wl_buffer != NULL) {
+    wl_buffer_destroy(surf->base.wl_buffer);
+    munmap(surf->base.buffer,
+           surf->base.config.width * surf->base.config.height * 4);
+  }
+  if (surf->layer.layer_surface != NULL)
+    zwlr_layer_surface_v1_destroy(surf->layer.layer_surface);
+  if (surf->base.region != NULL)
+    wl_region_destroy(surf->base.region);
+  if (surf->base.wl_surface != NULL)
+    wl_surface_destroy(surf->base.wl_surface);
+
+  surf->base.type = SINIT_RAW_SURFACE;
 }
 
 #endif
