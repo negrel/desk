@@ -90,6 +90,11 @@ int main(int argc, char **argv) {
     switch (c) {
     case 'l':
       log_level = log_level_from_string(optarg);
+      if ((int)log_level == -1) {
+        fprintf(stderr, "invalid log level");
+        print_usage(prog_name);
+        return EXIT_FAILURE;
+      }
       break;
 
     case 'h':
