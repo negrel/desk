@@ -1,8 +1,10 @@
 LDFLAGS := $(shell pkg-config --cflags --libs libsystemd)
 
-build: ./main.c $(SRC_FILES)
+SRC_FILES := ./main.c $(SRC_DIR)/debug.c $(SRC_DIR)/log.c $(SRC_DIR)/xsnprintf.c
+
+build: $(SRC_FILES)
 	$(CC) $(CFLAGS) $(LDFLAGS) \
-		./main.c $(SRC_CFILES) -o $(BUILD_DIR)/powermon
+		$(SRC_FILES) -o $(BUILD_DIR)/powermon
 
 run:
 	$(BUILD_DIR)/powermon

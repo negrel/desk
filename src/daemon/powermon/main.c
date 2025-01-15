@@ -7,7 +7,7 @@
 #include <systemd/sd-bus.h>
 #include <systemd/sd-event.h>
 
-#define LOG_MODULE "powermon"
+#define LOG_MODULE "main"
 #include "log.h"
 
 #include "debug.h"
@@ -102,7 +102,7 @@ int main(int argc, char **argv) {
   }
 
   // Setup log.
-  log_init(LOG_COLORIZE_AUTO, false, LOG_FACILITY_USER, log_level);
+  log_init(LOG_COLORIZE_AUTO, true, LOG_FACILITY_USER, log_level);
   LOG_DBG("log initialized");
 
   powermon_data powermon = {0};
@@ -114,13 +114,11 @@ int main(int argc, char **argv) {
   SD_TRY_GOTO(r, cleanup, "failed to initialize to event loop");
 
   // Remove default SIGINT handler.
-  sigset_t ss;
+  sigset_t ss = {0};
   sigemptyset(&ss);
   sigaddset(&ss, SIGINT);
-  if (sigprocmask(SIG_BLOCK, &ss, NULL) < 0) {
+  if (sigprocmask(SIG_BLOCK, &ss, NULL) < 0)
     LOG_FATAL("failed to set signal mask: %m");
-    return EXIT_FAILURE;
-  }
 
   // Add SIGINT handler
   r = sd_event_add_signal(powermon.loop, &signal_source, SIGINT, signal_handler,

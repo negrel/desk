@@ -14,10 +14,6 @@ else
 	CFLAGS += -O2
 endif
 
-export SRC_CFILES := $(shell find $(PROJECT_DIR)/src -maxdepth 1 -type f -name '*.c')
-export SRC_HFILES := $(shell find $(PROJECT_DIR)/src -maxdepth 1 -type f -name '*.h')
-export SRC_FILES := $(SRC_CFILES) $(SRC_HFILES)
-
 .PHONY: all
 all: clean build/daemon/powermon install
 
