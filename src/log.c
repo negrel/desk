@@ -169,14 +169,7 @@ void log_errno_provided(enum log_class log_class, const char *module,
   va_end(va);
 }
 
-static size_t map_len(void) {
-  size_t len = ALEN(log_level_map);
-#ifndef _DEBUG
-  /* Exclude "debug" entry for non-debug builds */
-  len--;
-#endif
-  return len;
-}
+static size_t map_len(void) { return ALEN(log_level_map); }
 
 int log_level_from_string(const char *str) {
   if (unlikely(str[0] == '\0'))

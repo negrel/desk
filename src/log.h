@@ -27,14 +27,14 @@ void log_init(enum log_colorize colorize, bool do_syslog,
 void log_deinit(void);
 
 void log_msg(enum log_class log_class, const char *module, const char *file,
-             int lineno, const char *fmt, ...);
+             int lineno, const char *fmt, ...) PRINTF(5);
 
 void log_errno(enum log_class log_class, const char *module, const char *file,
-               int lineno, const char *fmt, ...);
+               int lineno, const char *fmt, ...) PRINTF(5);
 
 void log_errno_provided(enum log_class log_class, const char *module,
                         const char *file, int lineno, int _errno,
-                        const char *fmt, ...);
+                        const char *fmt, ...) PRINTF(6);
 
 void log_msg_va(enum log_class log_class, const char *module, const char *file,
                 int lineno, const char *fmt, va_list va) VPRINTF(5);
