@@ -24,7 +24,7 @@
                 wayland
                 wayland-protocols
                 wayland-scanner
-                libGL.dev
+                wlr-protocols
               ];
               LD_LIBRARY_PATH = "${lib.makeLibraryPath buildInputs}";
               DEBUG = 1;
