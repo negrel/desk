@@ -1,26 +1,26 @@
-export PROJECT_DIR ?= $(shell git rev-parse --show-toplevel)
+export PROJECT_DIR := $(shell git rev-parse --show-toplevel)
 export PREFIX ?= /usr/local
 export BUILD_DIR ?= $(PROJECT_DIR)/build
 export SRC_DIR ?= $(PROJECT_DIR)/src
 export LIB_DIR ?= $(PROJECT_DIR)/lib
 
+# We use the G_ prefix as some makefile under src/ adds more flags to CFLAGS
+# and calls this makefile recursively.
+export G_CFLAGS ?= -Wall -Wextra -Werror
+G_CFLAGS += -I$(SRC_DIR) -I$(LIB_DIR)
+export G_LDFLAGS :=
+
 export CC := clang
-export CFLAGS ?= -Wall -Wextra -Werror
-CFLAGS += -I$(SRC_DIR) -I$(LIB_DIR)
+export AR := ar
 
 ifeq ($(DEBUG), 1)
-	CFLAGS += -g
+	G_CFLAGS += -g
 else
-	CFLAGS += -O2
+	G_CFLAGS += -O2
 endif
 
 .PHONY: all
 all: clean build/daemon/powermon install
-
-.PHONY: install
-install:
-	mkdir -p $(PREFIX)/bin
-	cp $(BUILD_DIR)/* $(PREFIX)/bin/
 
 build/%: $(BUILD_DIR)/%
 	@true

@@ -1,6 +1,7 @@
-LDFLAGS := $(shell pkg-config --cflags --libs libsystemd)
+CFLAGS := $(G_CFLAGS)
+LDFLAGS := $(G_LDFLAGS) $(shell pkg-config --cflags --libs libsystemd)
 
-SRC_FILES := ./main.c $(SRC_DIR)/debug.c $(SRC_DIR)/log.c $(SRC_DIR)/xsnprintf.c
+SRC_FILES := ./main.c
 
 build: $(SRC_FILES)
 	$(CC) $(CFLAGS) $(LDFLAGS) \

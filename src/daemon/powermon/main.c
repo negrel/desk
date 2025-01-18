@@ -7,10 +7,10 @@
 #include <systemd/sd-bus.h>
 #include <systemd/sd-event.h>
 
+#define LOG_IMPLEMENTATION
 #define LOG_MODULE "main"
 #include "log.h"
 
-#include "debug.h"
 #include "notify.h"
 #include "tllist.h"
 
@@ -32,7 +32,7 @@
 #define UP_STATE_BATTERY_LEVEL_HIGH 5
 #define UP_STATE_BATTERY_LEVEL_FULL 6
 
-#define SD_TRY(err, fmt, ...)                                                  \
+#define SD_TRY_RETURN(err, fmt, ...)                                           \
   if (err < 0) {                                                               \
     LOG_ERR(fmt ": %s", ##__VA_ARGS__, strerror(-err));                        \
     return err;                                                                \
@@ -188,30 +188,31 @@ static int for_all_batteries(sd_bus *bus, void *data,
                                        void *data)) {
   sd_bus_message *reply = NULL;
 
-  SD_TRY(sd_bus_call_method(bus, "org.freedesktop.UPower",
-                            "/org/freedesktop/UPower", "org.freedesktop.UPower",
-                            "EnumerateDevices", NULL, &reply, ""),
-         "failed to call method to enumerate devices");
+  SD_TRY_RETURN(sd_bus_call_method(bus, "org.freedesktop.UPower",
+                                   "/org/freedesktop/UPower",
+                                   "org.freedesktop.UPower", "EnumerateDevices",
+                                   NULL, &reply, ""),
+                "failed to call method to enumerate devices");
 
-  SD_TRY(sd_bus_message_enter_container(reply, 'a', "o"),
-         "failed to enter reply array");
+  SD_TRY_RETURN(sd_bus_message_enter_container(reply, 'a', "o"),
+                "failed to enter reply array");
 
   const char *path;
   while (sd_bus_message_read(reply, "o", &path) > 0) {
     LOG_DBG("device path: %s", path);
     sd_bus_message *type_reply = NULL;
     uint32_t type = 0;
-    SD_TRY(sd_bus_get_property(bus, "org.freedesktop.UPower", path,
-                               "org.freedesktop.UPower.Device", "Type", NULL,
-                               &type_reply, "u"),
-           "failed to get type of power device");
-    SD_TRY(sd_bus_message_read(type_reply, "u", &type),
-           "failed to read reply of 'Type' property get");
+    SD_TRY_RETURN(sd_bus_get_property(bus, "org.freedesktop.UPower", path,
+                                      "org.freedesktop.UPower.Device", "Type",
+                                      NULL, &type_reply, "u"),
+                  "failed to get type of power device");
+    SD_TRY_RETURN(sd_bus_message_read(type_reply, "u", &type),
+                  "failed to read reply of 'Type' property get");
 
     if (type == UP_DEVICE_TYPE_BATTERY) {
       LOG_DBG("device '%s' is a battery", path);
-      SD_TRY(cb(bus, path, data), "failed to execute callback on battery %s",
-             path);
+      SD_TRY_RETURN(cb(bus, path, data),
+                    "failed to execute callback on battery %s", path);
     }
     sd_bus_message_unref(type_reply);
   }
@@ -287,14 +288,14 @@ static int on_battery_changed(sd_bus_message *m, void *userdata,
   notification notif = {0};
 
   // Read interface.
-  SD_TRY(sd_bus_message_read(m, "s", &interface),
-         "failed to read interface of properties changed signal");
+  SD_TRY_RETURN(sd_bus_message_read(m, "s", &interface),
+                "failed to read interface of properties changed signal");
   LOG_DBG("signal on interface %s", interface);
   if (strcmp(interface, "org.freedesktop.UPower.Device") != 0)
     return 0;
 
-  SD_TRY(sd_bus_message_enter_container(m, 'a', "{sv}"),
-         "failed to enter battery changed container");
+  SD_TRY_RETURN(sd_bus_message_enter_container(m, 'a', "{sv}"),
+                "failed to enter battery changed container");
 
   while (sd_bus_message_enter_container(m, 'e', "sv") > 0) {
 
@@ -305,24 +306,24 @@ static int on_battery_changed(sd_bus_message *m, void *userdata,
     LOG_DBG("battery property '%s' changed", key);
 
     if (strcmp(key, "State") == 0) {
-      SD_TRY(sd_bus_message_enter_container(m, 'v', "u"),
-             "failed to enter variant");
+      SD_TRY_RETURN(sd_bus_message_enter_container(m, 'v', "u"),
+                    "failed to enter variant");
       r = sd_bus_message_read(m, "u", &battery->state);
       SD_TRY_GOTO(r, cleanup, "failed to read property 'State' change");
 
       sd_bus_message_exit_container(m);
       sd_bus_message_exit_container(m);
     } else if (strcmp(key, "BatteryLevel") == 0) {
-      SD_TRY(sd_bus_message_enter_container(m, 'v', "u"),
-             "failed to enter variant");
+      SD_TRY_RETURN(sd_bus_message_enter_container(m, 'v', "u"),
+                    "failed to enter variant");
       r = sd_bus_message_read(m, "u", &battery->level);
       SD_TRY_GOTO(r, cleanup, "failed to read property 'BatteryLevel' change");
 
       sd_bus_message_exit_container(m);
       sd_bus_message_exit_container(m);
     } else if (strcmp(key, "Percentage") == 0) {
-      SD_TRY(sd_bus_message_enter_container(m, 'v', "d"),
-             "failed to enter variant");
+      SD_TRY_RETURN(sd_bus_message_enter_container(m, 'v', "d"),
+                    "failed to enter variant");
       r = sd_bus_message_read(m, "d", &battery->percentage);
       SD_TRY_GOTO(r, cleanup, "failed to read property 'Percentage' change");
 
