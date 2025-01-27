@@ -7,9 +7,6 @@ build: $(SRC_FILES)
 	$(CC) $(CFLAGS) $(LDFLAGS) \
 		$(SRC_FILES) -o $(BUILD_DIR)/usound
 
-run:
-	$(BUILD_DIR)/usound
-
 compile_flags:
 	@echo $(CFLAGS) $(LDFLAGS)
 

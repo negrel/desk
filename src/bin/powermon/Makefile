@@ -7,8 +7,5 @@ build: $(SRC_FILES)
 	$(CC) $(CFLAGS) $(LDFLAGS) \
 		$(SRC_FILES) -o $(BUILD_DIR)/powermon
 
-run:
-	$(BUILD_DIR)/powermon
-
 compile_flags:
 	@echo $(CFLAGS) $(LDFLAGS)
