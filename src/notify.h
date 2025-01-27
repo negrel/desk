@@ -1,3 +1,5 @@
+// Single header file notification library based on sd-bus.
+
 #ifndef NOTIFY_H_INCLUDE
 #define NOTIFY_H_INCLUDE
 
