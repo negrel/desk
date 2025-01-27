@@ -20,7 +20,7 @@ else
 endif
 
 .PHONY: all
-all: clean build/daemon/powermon install
+all: clean build/bin/powermon build/bin/usound
 
 build/%: $(BUILD_DIR)/%
 	@true

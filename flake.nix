@@ -35,7 +35,7 @@
             };
           };
           packages = {
-            powermon = pkgs.callPackage ./src/daemon/powermon/pkg.nix {
+            powermon = pkgs.callPackage ./src/bin/powermon/pkg.nix {
               inherit pkgs repo;
             };
           };

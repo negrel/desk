@@ -1,4 +1,4 @@
-CFLAGS := $(G_CFLAGS) -I$(SRC_DIR)/daemon/powermon
+CFLAGS := $(G_CFLAGS) -I$(SRC_DIR)/bin/powermon
 LDFLAGS := $(G_LDFLAGS) $(shell pkg-config --cflags --libs libsystemd)
 
 SRC_FILES := ./main.c
