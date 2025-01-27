@@ -4,15 +4,18 @@
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
   };
 
-  outputs = { nixpkgs, flake-utils, ... }:
+  outputs =
+    { nixpkgs, flake-utils, ... }:
     let
       outputsWithoutSystem = { };
-      outputsWithSystem = flake-utils.lib.eachDefaultSystem (system:
+      outputsWithSystem = flake-utils.lib.eachDefaultSystem (
+        system:
         let
           pkgs = import nixpkgs { inherit system; };
           lib = pkgs.lib;
           repo = ./.;
-        in {
+        in
+        {
           devShells = {
             default = pkgs.mkShell rec {
               buildInputs = with pkgs; [
@@ -25,6 +28,7 @@
                 wayland-protocols
                 wayland-scanner
                 wlr-protocols
+                pipewire
               ];
               LD_LIBRARY_PATH = "${lib.makeLibraryPath buildInputs}";
               DEBUG = 1;
@@ -35,6 +39,8 @@
               inherit pkgs repo;
             };
           };
-        });
-    in outputsWithSystem // outputsWithoutSystem;
+        }
+      );
+    in
+    outputsWithSystem // outputsWithoutSystem;
 }

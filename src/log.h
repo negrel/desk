@@ -1,3 +1,5 @@
+// Single-file header library for logging.
+
 #ifndef LOG_H_INCLUDE
 #define LOG_H_INCLUDE
 

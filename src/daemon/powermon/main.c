@@ -262,7 +262,7 @@ int main(int argc, char **argv) {
     case 'l':
       log_level = log_level_from_string(optarg);
       if ((int)log_level == -1) {
-        fprintf(stderr, "invalid log level");
+        fprintf(stderr, "invalid log level\n");
         print_usage(prog_name);
         return EXIT_FAILURE;
       }
