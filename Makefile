@@ -1,4 +1,4 @@
-export PROJECT_DIR := $(shell git rev-parse --show-toplevel)
+export PROJECT_DIR ?= $(shell git rev-parse --show-toplevel)
 export PREFIX ?= /usr/local
 export BUILD_DIR ?= $(PROJECT_DIR)/build
 export SRC_DIR ?= $(PROJECT_DIR)/src
@@ -20,7 +20,10 @@ else
 endif
 
 .PHONY: all
-all: clean build/bin/powermon build/bin/usound
+all: clean build/bin/powermon build/bin/usound install
+
+install:
+	find $(BUILD_DIR) -type f -executable -printf "%f\n" | xargs -I{} install $(BUILD_DIR)/{} $(PREFIX)/{}
 
 build/%: $(BUILD_DIR)/%
 	@true
@@ -32,7 +35,7 @@ clean:
 .PHONY: format
 format:
 	find $(PROJECT_DIR)/src \
-		\( -name '*.c' -or -name '*.h' \) -exec clang-format -i {} \;
+		\( -name *.c' -or -name '*.h' \) -exec clang-format -i {} \;
 
 .PHONY: compile_flags.txt
 compile_flags.txt:

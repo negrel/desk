@@ -220,8 +220,8 @@ static void watch_battery(sd_bus *bus, const char *path, void *data) {
            battery->percentage, battery->level, battery->state);
 }
 
-static int signal_handler(sd_event_source *s, const struct signalfd_siginfo *si,
-                          void *userdata) {
+static int on_signal(sd_event_source *s, const struct signalfd_siginfo *si,
+                     void *userdata) {
   (void)s;
   (void)si;
 
@@ -300,7 +300,7 @@ int main(int argc, char **argv) {
 
     // Add SIGINT handler to event loop.
     SDEV_PANIC(sd_event_add_signal(powermon.loop, &signal_source, SIGINT,
-                                   signal_handler, powermon.loop),
+                                   on_signal, powermon.loop),
                "failed to add SIGINT handler");
   }
 
